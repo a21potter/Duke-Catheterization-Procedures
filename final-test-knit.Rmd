@@ -1,0 +1,203 @@
+---
+title: "final-writeup"
+output:
+  pdf_document: default
+  html_document: default
+date: "2022-11-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+### Packages
+library(survival)
+library(survminer)
+library(tidyverse)
+```
+
+
+```{r}
+data <- readRDS('dukecath_pre-processed.RDS')
+data_clean <- data %>% 
+  filter(ACS %in% c("NSTEMI", "UA")) %>% 
+  filter(TYPE_SUBSEQUENT != "Both (same day)")
+```
+
+# Introduction
+
+## Background
+
+In the United States, heart disease continues to be the number one cause of death, killing an estimated 696,962 Americans in 2020 alone.[1] The most commonly diagnosed heart disease is coronary artery disease (CAD), where the coronary arteries, which deliver blood to the heart muscles, are narrowed by plaque build-up (i.e., atherosclerosis). CAD is typically diagnosed in-hospital via cardiac catheterization, a minimally invasive procedure in which a catheter is guided from a peripheral entry site through a blood vessel to the heart, where physicians can assess the degree of stenosis. 
+
+If a plaque has been disrupted such that a clot forms and occludes the coronary artery (i.e., myocardial ischemia), the disease becomes classified as Acute Coronary Syndrome (ACS). The most life-threatening type of ACS, ST-elevation myocardial infarction (STEMI), occurs due to complete coronary artery occlusion and revascularization treatment is performed immediately. On the other hand, non-ST-elevation myocardial infarction (NSTEMI) and unstable angina (UA) are types of ACS caused by less life-threatening occlusions (e.g., partial or temporary). Because some type of blockage is still present in the coronary arteries, patients with NSTEMI and UA will often also receive revascularization treatment; however, it is possible that the patient may not require immediate intervention.[2] 
+
+There are two common interventions to treat ACS: coronary artery bypass grafting (CABG) and percutaneous coronary intervention (PCI). CABG has long been the gold standard for patients with CAD, particularly those with multi-vessel occlusions and diabetes, and it is considered the more definitive treatment of the two. On the other hand, PCI is a less invasive nonsurgical procedure that occurs through catheterization. As a result, PCI is typically performed during or immediately following (same-day) a catheterization that shows arterial occlusion. Compared to CABG, treatment with PCI is more common, and some evidence suggests it may have non-inferior outcomes in certain subpopulations of CAD patients with less disease complexity. In general, however, it remains debated among clinicians and researchers whether CABG or PCI is preferred and under which circumstances.[3] In particular, in NSTEMI and UA patients, the benefits/risks of an immediate intervention with PCI vs. a delayed intervention with CABG tend to be more nuanced (as opposed to STEMI, which nearly always requires immediate revascularization with PCI). Furthermore, for patients receiving CABG, physicians may be interested in whether there is an optimal choice of when to perform the surgery, especially in cases where the immediate risk of an adverse cardiovascular event is not yet clear. Should CABG be performed as soon as possible after the diagnostic procedure, or would the patient benefit at all from deferring the surgery?
+
+## Research Hypotheses
+
+In this analysis, we focus on patients presenting with NSTEMI or UA at the time of the diagnostic catheterization, and we aim to investigate whether the type of subsequent intervention performed (CABG or PCI) is associated with overall survival (OS). Within patients receiving CABG, we also investigate whether the number of days (from diagnostic catheterization) to the intervention is associated with OS. We hypothesize that, with adjustment for patient demographics, comorbidities, and the number of diseased vessels, CABG as well as shorter time-to-CABG are associated with better patient survival outcomes. 
+
+## Data Description & Key Variables
+
+The DUKECATHR dataset provides catheterization outcome measures for Duke Hospital patients receiving a catheterization starting from the first catheterization showing significant CAD. We are interested in patients who received a diagnostic catheterization followed by a revascularization intervention. Specifically, we filtered the dataset for individuals presenting with NSTEMI or UA at the time of the diagnostic catheterization who received an invasive intervention afterwards (either PCI or CABG). Because we aim to identify any differences in survival between patients who received PCI compared to patients who received CABG, we removed any patients who received both PCI and CABG on the same day. For individuals receiving multiple catheterizations and interventions, only the most recent intervention is considered. 
+
+The primary predictors of interest are whether the subsequent intervention was CABG or PCI and the time (in days) to the intervention. For each catheterization, DUKECATHR provides the time to next CABG and the time to next PCI, and from these two variables we derived the number of days until the closest subsequent intervention and its type (CABG or PCI). However, we found that per medical protocols and reflected in the dataset (Figure 1?), PCI is almost always performed on the day of diagnostic catheterization whereas CABG, being an operating room procedure, requires multiple days of preparation. Thus, the days-to-intervention measure was investigated in a subgroup analysis of only patients receiving CABG. The variables we controlled for are patient race (Caucasian, African American, other), gender (male, female), the number of significantly diseased vessels (0-3), and whether the patient has history of MI, cerebrovascular disease, diabetes, and smoking. The patient outcome we are interested in is days to death from the diagnostic catheterization up until the last follow-up.
+
+## EDA
+
+As the days between the diagnostic and interventional catheterization are highly skewed in the data, we decided to log-transform this variable in the model.
+```{r}
+hist(data_clean$DSINTV[data_clean$DSINTV > 0 & data_clean$DSINTV < 50])
+```
+
+```{r}
+ggsurvplot(survfit(Surv(DAYS2LKA, DEATH) ~ TYPE_SUBSEQUENT, data = data_clean), 
+     xlab = "Days", ylab = "Est. Survival Probability",
+     ylim = c(0, 1),
+     conf.int = T, censor = F
+     )
+```
+
+# Methods
+
+To explore the relationship between revascularization interventions (PCI or CABG) and survival of NSTEMI and UA patients, we must account for patient characteristics that we expect may be associated with greater/reduced risk of death based on our existing knowledge of CAD patients. First, we control for history of diabetes and cerebrovascular disease, both of which are leading causes of mortality in the United States apart from cardiovascular disease.[4] We expect that patients with either of these comorbidities in addition to CAD/ACS may experience greater risk of death following the revascularization intervention. Chronic respiratory illnesses are also one of the leading causes of death across the country; we choose to account for history of smoking in our analysis because smoking is the most prevalent risk factor for chronic obstructive pulmonary disease (COPD),[5] so patients with history of smoking at the time of their diagnostic catheterization may be more likely to develop COPD later in life. We control for history of MI (i.e., presence of MI prior to current incidence) as a single infarction can drastically impair heart function and greatly increases the risk of recurrent MI and mortality,[6]  and we also consider the number of significantly diseased vessels, which tends to be directly correlated to the severity of the patient's condition and therefore may lead to a higher likelihood for an adverse outcome after the patient’s catheterization procedure.[7] Finally, we believe that demographics can impact the quality of a catheterization procedure, particularly due to existing racial/ethnic inequities that exist in the healthcare industry. For instance, evidence suggests that Black patients receive cardiac catheterizations at significantly lower rates compared to White patients,[8] and racial minority groups receive overall reduced access and quality of care in the United States.[9] We also account for patient gender: although women were long believed to be more “protected” against cardiovascular disease compared to men, recent evidence suggests that due to under-recognition of MIs in women, women are less likely to receive cardiac catheterizations and the appropriate interventions when they are needed.[10]
+
+In addition to the main effects described above, we believe interaction effects between the type of procedure performed and certain patient comorbidities must also be accounted for. Specifically, in patients with diabetes, there is strong evidence that risk of death is greater after treatment with PCI due to higher rates of restenosis and clots forming around the stent.11 Furthermore, several observational studies have identified significantly worse survival outcomes of PCI in patients with history of cerebrovascular disease,[12,13] and PCI has been found to be a less effective treatment in patients with multi-vessel occlusions.[3] Lastly, we suspect that patients with a prior history of MI may have worse cardiovascular health, in which case receiving PCI instead of a potentially more definitive treatment with CABG may be associated with greater mortality risk. 
+
+We consider each of the described mortality risk factors, demographic variables, and interaction terms to be important covariates to account for in order to investigate whether there is an association between treatment with PCI or CABG and the patient mortality rate. We proceed with a Cox regression model for a few reasons. To start, the Cox model is appropriate to use when modeling time to a failure. This is unlike a binary logistic regression model which only classifies between a response variable with two possible outcomes. Second, Cox regression is a popular choice for research within the epidemiology and medical field because it accounts for patient heterogeneity. Seeing that we would like to account for the effects of multiple variables such as demographics and comorbidities, we believe that Cox regression is best for our research. Lastly, Cox regression is appropriate when it is assumed that constant hazards exist in the survival data. In our model diagnostics and assumptions, we assess and verify this condition as a justification for our choice to use the Cox regression model.
+
+```{r}
+library(survival)
+library(survminer)
+```
+
+### TODO: write out expression for the model.
+
+```{r}
+coxm1 <- coxph(Surv(DAYS2LKA, DEATH) ~
+               # log(DSINTV + 0.1) +
+                # DSINTV_CAT +
+               TYPE_SUBSEQUENT + 
+                 # demographic
+                 GENDER +
+                 RACE_G +
+                 # Patient history and co-morbidities
+                 HXMI +
+                 HXCEREB +
+                 HXDIAB + 
+                 HXSMOKE + 
+                 # Catheterization results
+                 NUMDZV +
+                 # interaction terms
+                 NUMDZV*TYPE_SUBSEQUENT +
+                 HXMI*TYPE_SUBSEQUENT +
+                 HXCEREB*TYPE_SUBSEQUENT +
+                 HXDIAB*TYPE_SUBSEQUENT, data = data_clean)
+
+summary(coxm1)
+```
+
+First, we were interested in examining associations between length of survival and the type of interventional procedure: CABG or PCI. We saw no significant association between type of procedure and hazard of death, holding all other variables constant. That is, the hazard of death is from [0.9591, 1.330] greater for patients who received PCI. This confidence interval crosses 1, so there is no significant association for type of interventional procedure.
+
+However, we then proceeded to look closer into the type of catherization by looking at interaction effects between comorbidities and type (PCI or CABG). In doing so, we found that there were significant association between the type of catheterization and history of cerebrovascular disease. That is, for individuals with a history of cerebrovascular disease, patients who received the PCI catheterization are expected to have 2.318 [1.967, 2.700] times the hazard compared to an individual who received the CABG treatment. 
+Similarly, PCI is associated with higher hazard for patients with a history of diabetes. That is, for individuals with a history of diabetes, patients who received the PCI catheterization are expected to have 2.251 [1.992, 2.698] times the hazard compared to an individual who received the CABG treatment.
+
+This supported our hypothesis that PCI may be associated with worse outcome for patients who have more severe/complicated conditions.
+
+Among the variables we controlled for, we saw that a patient's past history of chronic illness had significant associations with length of survival after catheterization.Holding all other variables in the model constant, an individual who has had previous history of Myocardial Infarction is expected to have 1.2421 ([1.1493, 1.342]) times the hazard for an individual who has not had a previous history of this condition. This, and all other multiplicative effects discussed below, holds regardless of the time t. Holding all other variables in the model constant, an individual who has had a previous history of Diabetes is expected to have approximately 1.491 ([1.371, 1.621]) times the hazard of death compared to an individual who has not had a previous history of this condition. Holding all other variables in the model constant, an individual who has had a previous history of Cerebrovascular Disease is expected to have approximately 1.608 ([1.441, 1.795]) times the hazard of death compared to an individual who has not had a previous history of this condition.
+
+As expected, there is also a positive association between the number of diseased vessels and survival length. Holding all other variables in the model constant, there is a 1.3603 ([1.289, 1.436]) times increase in the expected relative hazard for each one additional increase in the number of significantly diseased vessels.
+
+There were also notable associations between hazard and patient gender. Holding all other variables in the model constant, females are expected to have 1.229 ([1.165, 1.297]) times the hazard of death compared to males.
+
+Interestingly, we do not find any statistically significant associations between hazard and interesting variables such as race and history of smoking.
+
+Our second research goal was to investigate whether the days between receiving diagnostic and interventional catheterization is associated with longer survival. We analyzed this exclusively for patients who received the CABG treatment, since most patients who received the PCI catheteration received treatment on the same day. According to the model below, for every one day increase in the time between the diagnostic and interventional catheterization, the hazard is expected to multiply by a factor of approximately 0.9967 ([0.9771, 1.017]) times. As this confidence interval overlaps with 1, we do not see a significant association between hazard of death and time to interventional catheterization.
+
+```{r}
+data_clean_cabg <- data_clean %>% 
+  filter(TYPE_SUBSEQUENT == "CABG")
+```
+
+```{r}
+coxm2 <- coxph(Surv(DAYS2LKA, DEATH) ~
+               log(DSINTV + 0.1) +
+                 # demographic
+                 GENDER +
+                 RACE_G +
+                 # Patient history and co-morbidities
+                 HXMI +
+                 HXCEREB +
+                 HXDIAB + 
+                 HXSMOKE + 
+                 # Catheterization results
+                 NUMDZV
+                 , data = data_clean_cabg)
+
+summary(coxm2)
+```
+
+### Model Assumptions and Diagnostics
+
+An assumption of cox proportional hazards regression is that the hazard associated with a variable does not change over time. For example, the magnitude of the increase in risk of death associated with being a male is the same in early periods after an interventional cath as it is in later times.
+
+
+
+For each variable, we see that the plot of Schoenfeld residual is randomly distributed around 0 (the blue line remains approximately horizontal around over time). Hence, there is no strong reason to believe that the hazard associated with a variable changes over time.
+
+Another assumption that must be satisfied for the proportional hazards model is the independence of survival times between records in the dataset. Given that we filter for one record per patient in our final dataset (for patients with more than one catheterization, we choose to examine their most recent catheterization), there is no reason to believe that the survival time for one record in the dataset will be dependent on the survival time for another record.
+
+# Discussion
+
+## PCI vs. CABG
+
+Given the current standard of clinical practice for treatment of CAD and ACS, we hypothesized that in patients presenting with NSTEMI or UA and adjusting for various demographic and health factors, treatment with PCI would be associated with inferior patient survival outcomes compared to treatment with CABG. Although not statistically significant, we observed a general trend supporting this hypothesis; PCI is associated with higher hazard (not significant) compared to CABG in NSTEMI and UA, when controlling for patient demographics (gender, race), risk factors (diabetes, cerebrovascular disease, smoking, MI, number of diseased vessels), and interactions with the procedure type. We found that given treatment with PCI, history of diabetes and/or cerebrovascular disease (i.e., strokes or transient ischemic attacks) were associated with even greater risk of death. Prior research suggesting patients with diabetes and patients with cerebrovascular disease may have higher mortality risk after treatment with PCI[11–13] aligns with these findings. Interestingly, we did not find significant interactions between treatment with PCI and history of MI and/or the number of significantly diseased vessels. It is possible that this is a consequence of later treatments that were not accounted for in our analysis. For instance, if a patient with reduced cardiovascular function (as may be the case with recurrent MI) or multi-vessel occlusions presents with NSTEMI or UA, cardiologists may prefer immediate treatment with PCI as these patients are likely to be more sensitive to cardiac ischemia. PCI may then be followed by CABG at a later date. In this case, these patients are included in our analysis as having received PCI as the treatment for their current condition, but in reality the primary treatment may have been CABG. 
+
+## Time to CABG
+
+We hypothesized that longer time-to-CABG would be associated with worse patient survival, as the patient needing treatment may be susceptible to a longer period of heart ischemia. Interestingly, we did not find evidence for this in the data; we did not detect a significant relationship between the time to CABG and the risk of death. One possible explanation for this is that there may be unobserved reasons for the delay between a CABG patient’s diagnostic catheterization and the subsequent CABG surgery. For instance, if a patient presented with NSTEMI or UA at diagnostic time, it is possible the occlusion resolved itself or the degree of blockage was not serious enough to treat invasively and instead the patient may have been treated with non-invasive methods such as thrombolytics. The subsequent CABG procedure may then have occurred for a different disease occurrence (e.g., the patient developed a new vessel occlusion requiring CABG). Furthermore, a previous analysis of acute MI patients receiving CABG found a significant association between CABG <10 days after MI and increased mortality in older patients and patients with impaired left ventricular ejection fraction (LVEF).[14] In our analysis, because we did not account for patient age or LVEF, we may not have been able to observe such a relationship. 
+
+## Limitations and Future Directions
+
+The limitations of our research mainly lie in the scope of our research question and our model. To start, we aimed to preserve the interpretability of our final Cox regression model by selecting variables that would allow us to do so. Thus, there are other possible covariates we could have controlled for such as age that we chose not to prioritize in our analysis.
+
+In our time-to-CABG analysis, the time-to-intervention variable may not fully capture our variable of interest, which was the time between a diagnostic treatment and its subsequent CABG treatment. The way the variable was measured, it does not guarantee that a subsequent CABG corresponds to treating the conditions found during the previous diagnostic catheterization. 
+
+In this manuscript, we focus on overall survival of a patient. However, survival may not be the only outcome that is indicative of whether PCI or CABG is a better procedure. In the future, we may expand our analysis to include other possible secondary outcomes such as time to recurrent MI or stroke.
+
+## Summary
+
+Our analysis of NSTEMI and UA patients treated with PCI or CABG does not provide strong evidence that treatment with CABG is associated with greater patient survival compared to PCI. However, clinicians and patients should consider comorbidities, particularly diabetes and cerebrovascular disease, as potentially associated with greater mortality risk if the patient is treated with PCI. 
+
+# References
+
+1.	CDC. Heart Disease Facts | cdc.gov. Centers for Disease Control and Prevention. Published October 14, 2022. Accessed November 14, 2022. https://www.cdc.gov/heartdisease/facts.htm
+
+2.	Anderson ML, Peterson ED, Peng SA, et al. Differences in the Profile, Treatment, and Prognosis of Patients With Cardiogenic Shock by Myocardial Infarction Classification. Circulation: Cardiovascular Quality and Outcomes. 2013;6(6):708-715. doi:10.1161/CIRCOUTCOMES.113.000262
+
+3.	Spadaccio C, Benedetto U. Coronary artery bypass grafting (CABG) vs. percutaneous coronary intervention (PCI) in the treatment of multivessel coronary disease: quo vadis? —a review of the evidences on coronary artery disease. Ann Cardiothorac Surg. 2018;7(4):506-515. doi:10.21037/acs.2018.05.17
+
+4.	National Center for Health Statistics C for DC. National Vital Statistics System – Mortality Data (2020) via CDC WONDER. Published online 2021. http://wonder.cdc.gov/ucd-icd10.html
+
+5.	COPD - What Is COPD? | NHLBI, NIH. Accessed November 21, 2022. https://www.nhlbi.nih.gov/health/copd
+
+6.	Nakatani D, Sakata Y, Suna S, et al. Incidence, predictors, and subsequent mortality risk of recurrent myocardial infarction in patients following discharge for acute myocardial infarction. Circ J. 2013;77(2):439-446. doi:10.1253/circj.cj-11-1059
+
+7.	Lopes NH, Paulitsch F da S, Gois AF, et al. Impact of number of vessels disease on outcome of patients with stable coronary artery disease: 5-year follow-up of the Medical, Angioplasty, and bypass Surgery study (MASS). Eur J Cardiothorac Surg. 2008;33(3):349-354. doi:10.1016/j.ejcts.2007.11.025
+
+8.	Chen J, Rathore SS, Radford MJ, Wang Y, Krumholz HM. Racial Differences in the Use of Cardiac Catheterization after Acute Myocardial Infarction. New England Journal of Medicine. 2001;344(19):1443-1449. doi:10.1056/NEJM200105103441906
+
+9.	Mochari-Greenberger H, Mosca L. Differential Outcomes by Race and Ethnicity in Patients with Coronary Heart Disease: A Contemporary Review. Curr Cardiovasc Risk Rep. 2015;9(5):20. doi:10.1007/s12170-015-0447-4
+
+10.	Maas AHEM, Appelman YEA. Gender differences in coronary heart disease. Neth Heart J. 2010;18(12):598-602.
+
+11.	Armstrong EJ, Waltenberger J, Rogers JH. Percutaneous Coronary Intervention in Patients With Diabetes. J Diabetes Sci Technol. 2014;8(3):581-589. doi:10.1177/1932296813517058
+
+12.	Song C, Sukul D, Seth M, et al. Outcomes After Percutaneous Coronary Intervention in Patients With a History of Cerebrovascular Disease: Insights From the Blue Cross Blue Shield of Michigan Cardiovascular Consortium. Circ Cardiovasc Interv. 2018;11(6):e006400. doi:10.1161/CIRCINTERVENTIONS.118.006400
+
+13.	Sasao H, Fujiwara H, Horiuchi N, et al. Comparison of Long-Term Clinical Outcomes after Drug-Eluting Stent Implantation in Patients with Coronary Artery Disease with and without Prior Cerebral Infarction. Ann Vasc Dis. 2015;8(2):79-86. doi:10.3400/avd.oa.14-00137
+
+14.	Assmann A, Boeken U, Akhyari P, Lichtenberg A. Appropriate timing of coronary artery bypass grafting after acute myocardial infarction. Thorac Cardiovasc Surg. 2012;60(7):446-451. doi:10.1055/s-0032-1304542
+

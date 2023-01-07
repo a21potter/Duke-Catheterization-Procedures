@@ -1,0 +1,415 @@
+---
+title: "amber-file"
+author: "Amber Potter"
+date: '2022-11-14'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## For Reference:
+
+Mini translation of variable names:
+- rdaysfromindex = days from the date of the first catheterization for that
+patient that shows significant coronary artery disease (CAD) that is recorded in the Duke Health System
+- RSEQCATHNUM = this variable records the sequential number for the current catheterization
+record
+- rsubjecID = identifier, take out
+- YRCATH_G = year the procedure took place?
+- demographic variables = need levels to be relabeled
+- ACS = Acute coronary syndrome, coronary artery disease symptom status at the time of presentation
+- CHFSEV = Congestive heart failure is defined as evidence of fluid retention due to cardiac causes. There should be a history of one or more of the following: exertional dyspnea, orthopnea, paroxysmal nocturnal dyspnea, rales, pulmonary congestion on x-ray, or a ventricular gallop. This variable measures SEVERITY of CHF
+- DPCABG = Days from this catheterization to the closest preceding CABG.
+- DPMI = Days from this catheterization to the closest preceding myocardial infarction. 
+- DPPCI = Days from this catheterization to the closest preceding Percutaneous Coronary Intervention.
+- HXANGINA = History of anginal pain ever (excluding myocardial infarction pain)
+- HXCEREB = History of a stroke, a transient ischemic attack, hemiplegia, carotid surgery or stenting. An asymptomatic bruit is not included in the definition
+- HXCHF = History of congestive heart failure not due to acute MI
+- HXCOPD= History of chronic obstructive pulmonary disease (COPD)
+- HXDIAB = history of diabetes not differentiating between type I and type II
+- HXHTN = hypertension history
+- HXHYL = Previous diagnosis and/or treatment of hypercholesterolemia by a physician.
+- HXMI = History of a prior myocardial infarction
+- HXSMOKE = history of smoking
+- NUMPRMI = number of MRIs in history
+- DIASBP_R = diastolic blood pressure
+- PULSE_R = heart rate
+- SYSBP_R = systolic blood pressure
+- CBRUITS = presence of carotid bruits 
+- HEIGHT_R = height
+- S3 = third heart sound detected?
+- WEIGHT_R = weight 
+- CREATININE_R = Serum Creatinine (mg/dL) (as reported)
+- HDL_R = High Density Lipid (mg/dL) (as reported)
+- LDL_R = Low Density Lipid (mg/dL) (as reported)
+- TOTCHOL_R = Total Cholesterol (mg/dL) (as reported)
+
+
+
+
+### Packages
+
+```{r}
+library(tidyverse)
+library(survival)
+```
+
+## Data
+
+```{r}
+cathr <- readRDS("dukecath_pre-processed.RDS")
+
+# Overview of patient information
+cathr$ACS <- factor(cathr$ACS, levels=c(0,1,2,3,4), labels=c("No ACS", "STEMI", "NSTEMI", "MI Unspecified", "UA"))
+cathr$GENDER <- factor(cathr$GENDER, levels=c(0,1), labels=c("M", "F"))
+cathr$RACE_G <- factor(cathr$RACE_G, levels=c(1,2,3), labels=c("Caucasian", "African American", "Other"))
+cathr$INTVCATH <- factor(cathr$INTVCATH, levels=c(0,1), labels=c("No", "Yes"))
+
+
+cathr_clean <- cathr %>% 
+  filter(ACS %in% c("NSTEMI", "UA")) %>%  
+  filter(DIAGCATH == 0)
+```
+
+
+```{r}
+
+
+
+# 7080 rows left
+cathr_clean <- cathr %>% 
+  filter(ACS %in% c("Non-STEMI", "Unstable Angina")) %>%  
+  filter(DIAGCATH == 0) # 18.4%
+```
+
+```{r}
+# treatment
+cathr_clean %>% 
+  count(INTVCATH)
+```
+```{r}
+# Percentage of column that is NA.
+(colMeans(is.na(cathr_clean)))*100
+```
+
+```{r}
+summary(cathr_clean$DPMI)
+```
+
+- Days to Closest Previous Coronary Artery Bypass Surgery (DPCABG)
+- Days to Closest Previous Myocardial Infarction (DPMI)
+- Days to Closest Previous Percutaneous Coronary Intervention (DPPCI)
+
+```{r}
+ggplot(data = cathr_clean, aes(x = DPMI)) + 
+  geom_histogram(binwidth = 2) + 
+  labs(x = "DPMI", 
+       y = "Count", 
+       title = "Distribution of Days to Closest Previous Myocardial Infarction")
+```
+# what is an interesting treatment variable?
+
+Treatment: Whether PCI is performed (INTVCATH)
+Response: (DAYS2LKA)
+
+```{r}
+library(survival)
+# install.packages("survminer")
+library(survminer)
+
+coxm1 <- coxph(Surv(DAYS2LKA, DEATH) ~ INTVCATH + 
+                 , data = cathr_clean)
+
+summary(coxm1)
+```
+
+# Filter data for NSTEMI and UA
+
+this is the data we are working on
+
+```{r}
+cathr_modified <- cathr_modified %>%
+  filter(ACS == "NSTEMI" |ACS == "UA") %>%
+  filter(TYPE_SUBSEQUENT != "Both (same day)")
+```
+
+
+
+## InitialAFT Model
+
+
+- time between diagnostic and interventional cath in days (two different models)
+- indicator for if diagnostic and interventional cath on same day (two different models)
+- race variables
+- NOT gender
+
+```{r}
+cathr_modified_aft <- cathr_modified %>% 
+  filter(DSINTV > 0) %>%
+  filter(!is.na(DSINTV), !is.na(DEATH))
+
+
+library(survival)
+initial_aft_e <-  survreg(Surv(DSINTV, DEATH) ~ DSINTV_CAT +
+               DSINTV +
+               TYPE_SUBSEQUENT + 
+                 GENDER +
+                 RACE_G +
+                 HXDIAB, 
+                 data = cathr_modified_aft, dist = "exponential")
+summary(initial_aft_e)
+```
+
+```{r}
+initial_aft_w <- survreg(Surv(DAYS2LKA, DEATH) ~ DSINTV_CAT +
+               DSINTV +
+               TYPE_SUBSEQUENT + 
+                 GENDER +
+                 RACE_G +
+                 HXDIAB, 
+                 data = cathr_modified_aft, dist = "weibull")
+summary(initial_aft_w)
+```
+
+```{r}
+initial_aft_n <- survreg(Surv(DAYS2LKA, DEATH) ~ DSINTV_CAT +
+               DSINTV +
+               TYPE_SUBSEQUENT + 
+                 GENDER +
+                 RACE_G +
+                 HXDIAB, 
+                 data = cathr_modified_aft, dist = "lognormal")
+summary(initial_aft_n)
+```
+
+```{r}
+initial_aft_l <- survreg(Surv(DAYS2LKA, DEATH) ~ DSINTV_CAT +
+               DSINTV +
+               TYPE_SUBSEQUENT + 
+                 GENDER +
+                 RACE_G +
+                 HXDIAB, 
+                 data = cathr_modified_aft, dist = "loglogistic")
+summary(initial_aft_l)
+```
+
+# Cox model: how does same day relate to not same day?
+
+```{r}
+coxm_bin <- coxph(Surv(DAYS2LKA, DEATH) ~ DSINTV_CAT +
+               TYPE_SUBSEQUENT + 
+                 GENDER +
+                 RACE_G +
+                 HXDIAB, data = cathr_modified)
+
+summary(coxm_bin)
+```
+
+```{r}
+library(tidyverse)
+
+cathr <- read.csv("dukecathr.csv")
+
+# Overview of patient information
+cathr$ACS <- factor(cathr$ACS, levels=c(0,1,2,3,4), labels=c("No ACS", "STEMI", "NSTEMI", "MI Unspecified", "UA"))
+cathr$GENDER <- factor(cathr$GENDER, levels=c(0,1), labels=c("M", "F"))
+cathr$RACE_G <- factor(cathr$RACE_G, levels=c(1,2,3), labels=c("Caucasian", "African American", "Other"))
+cathr$INTVCATH <- factor(cathr$INTVCATH, levels=c(0,1), labels=c("No", "Yes"))
+```
+
+
+```{r}
+# treatment
+cathr_clean %>% 
+  count(INTVCATH)
+```
+```{r}
+# Percentage of column that is NA.
+(colMeans(is.na(cathr_clean)))*100
+```
+
+```{r}
+summary(cathr_clean$DPMI)
+```
+
+Days to Closest Previous Coronary Artery Bypass Surgery (DPCABG)
+Days to Closest Previous Myocardial Infarction (DPMI)
+Days to Closest Previous Percutaneous Coronary Intervention (DPPCI)
+
+```{r}
+ggplot(data = cathr_clean, aes(x = DPMI)) + 
+  geom_histogram(binwidth = 2) + 
+  labs(x = "DPMI", 
+       y = "Count", 
+       title = "Distribution of Days to Closest Previous Myocardial Infarction")
+```
+
+```{r}
+data <- readRDS('dukecath_pre-processed.RDS')
+data_clean <- data %>% 
+  filter(ACS %in% c("NSTEMI", "UA")) %>% 
+  filter(TYPE_SUBSEQUENT != "Both (same day)")
+```
+
+
+Variables of Interest: DSINTV and DSINTV_CAT.
+Response: Death and DAYS2LKA.
+
+```{r}
+hist(data_clean$DSINTV[data_clean$DSINTV > 0 & data_clean$DSINTV < 50])
+```
+
+```{r}
+library(survival)
+# install.packages("survminer")
+library(survminer)
+```
+
+```{r}
+colnames(data_clean)
+```
+
+```{r}
+coxm1 <- coxph(Surv(DAYS2LKA, DEATH) ~
+               log(DSINTV + 0.1) +
+               TYPE_SUBSEQUENT + 
+                 # demographic
+                 GENDER +
+                 RACE_G +
+                 # patient history and co-morbidities
+                 HXMI +
+                 HXCEREB +
+                 HXDIAB + 
+                 HXSMOKE + 
+                 # lab results
+                 TOTCHOL_R +
+                 # Catheterization results
+                 NUMDZV +
+                 # interaction terms
+                 NUMDZV*TYPE_SUBSEQUENT +
+                 HXMI*TYPE_SUBSEQUENT +
+                 HXCEREB*TYPE_SUBSEQUENT +
+                 HXDIAB*TYPE_SUBSEQUENT
+                 , data = data_clean)
+
+summary(coxm1)
+```
+
+
+
+
+# Binary multiple days
+
+```{r}
+coxm1 <- coxph(Surv(DAYS2LKA, DEATH) ~
+               TYPE_SUBSEQUENT + 
+                 # demographic
+                 GENDER +
+                 RACE_G +
+                 # patient history and co-morbidities
+                 HXMI +
+                 HXCEREB +
+                 HXDIAB + 
+                 HXSMOKE + 
+                 # lab results
+                 #TOTCHOL_R +
+                 # Catheterization results
+                 NUMDZV +
+                 # interaction terms
+                 NUMDZV*TYPE_SUBSEQUENT +
+                 HXMI*TYPE_SUBSEQUENT +
+                 HXCEREB*TYPE_SUBSEQUENT +
+                 HXDIAB*TYPE_SUBSEQUENT
+                 , data = data_clean)
+
+summary(coxm1)
+```
+
+
+```{r echo = FALSE}
+library(broom)
+library(knitr)
+tidy_coxm1 <- tidy(coxm1)
+
+exp_model_coefs <- as_tibble(exp(tidy_coxm1$estimate))
+
+conf_int <- confint(coxm1)
+model_conf_int_2.5 <- as_tibble(exp(conf_int))[,1]
+model_conf_int_97.5 <- as_tibble(exp(conf_int))[,2]
+
+model_variables <- as_tibble(c(names(coxm1$coefficients)))
+
+
+model_pvals <- as.data.frame(coef(summary(coxm1))[,5])[,1]
+
+Variables <- c("Intercept", "First Overtime", "Second Overtime", "Third Overtime", "Fourth Overtime", "Star Committing", "Superstar Committing", "Star Disadvantaged", "Superstar Disadvantaged", "Attendance", "Home Team Committing", "Seconds Left", "2016-17", "2017-18", "2018-19", "2019-20", "2020-21", "2021-22", "Playoff Game", "Offensive Foul", "Personal Foul", "Shooting Foul", "Ball Handling Foul", "Star Committing:Star Disadvantaged", "Superstar Committing:Star Disadvantaged", "Star Committing:Superstar Disadvantaged", "Superstar Committing:Superstar Disadvantaged")
+
+model_output_full <- data.frame(model_variables, 
+           exp_model_coefs, 
+           model_conf_int_2.5,
+           model_conf_int_97.5, 
+           model_pvals) %>%
+  kable(digits = 3, col.names = c("Variables", "Odds Ratio Coefficient", "2.5% CI for Odds Ratio", "97.5% CI for Odds Ratio", "P-Value (alpha = 0.05"))
+
+
+
+
+
+SE <- sqrt( diag( coxm1$se ))
+
+exp_coef <- exp(coxm1$coef)
+
+exp_coef <- coxm1$confint
+
+coef[2]
+
+
+## conf intervals for fixed effects
+se <- sqrt(diag(vcov(coxm1)))
+# table of estimates with 95% CI
+tab <- cbind(Est = fixef(coxm1), se, LL = fixef(coxm1) - 1.96 * se, UL = fixef(coxm1) + 1.96 *
+    se)
+
+df <- data.frame(tab)
+
+df <- df %>%
+  mutate(exp_Est = exp(Est),
+         exp_LL = exp(LL),
+         exp_UL = exp(UL),
+         z = Est/se,
+         p = ifelse(z>0, 2*pnorm(-z), 2*pnorm(z))) %>%
+  dplyr::select(Est, se, exp_Est, exp_LL, exp_UL, p) %>%
+  mutate(p = case_when(p<0.0005 ~ "<0.001",
+                       TRUE ~ as.character(formatC(round(p, 3), format='f', digits=3))))
+
+df %>%
+  kable(digits=3, col.names = c("Estimate", "Std. Error", "exp(Estimate)", "exp(Lower Bound", "exp(Upper Bound)", "P-value (alpha = 0.05"))
+
+
+```
+
+```{r include = FALSE, eval=FALSE}
+library(jpeg)
+jpeg(file="ggcoxdiag1.jpeg")
+coxdiag1 <- ggcoxdiagnostics(coxm1, type = "schoenfeld", title = "Diagnostic Plot for Type of Subsequent Procedure Model")
+dev.off()
+
+
+jpeg(file="ggcoxdiag2.jpeg")
+coxdiag2 <- ggcoxdiagnostics(coxm2, type = "schoenfeld", title = "Diagnostic Plot for Days to Intervention Model")
+dev.off()
+
+```
+
+```{r include = FALSE, eval=FALSE}
+img1 <- readJPEG(source = "ggcoxdiag1.jpeg",  native = FALSE)
+img2 <- readJPEG(source = "ggcoxdiag2.jpeg",  native = FALSE)
+plot(0:1,0:1,type="n",ann=FALSE,axes=FALSE)
+rasterImage(img1,0,0,1,1)
+plot.new() 
+rasterImage(img2,0,0,1,1)
+
+# ggcoxdiagnostics(coxm1, type = "deviance", linear.predictions=F)
+```

@@ -1,0 +1,185 @@
+---
+title: "jenny-eda"
+output: html_document
+date: "2022-11-14"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+
+cathr <- read.csv("dukecathr.csv")
+
+# Overview of patient information
+cathr$ACS <- factor(cathr$ACS, levels=c(0,1,2,3,4), labels=c("No ACS", "STEMI", "NSTEMI", "MI Unspecified", "UA"))
+cathr$GENDER <- factor(cathr$GENDER, levels=c(0,1), labels=c("M", "F"))
+cathr$RACE_G <- factor(cathr$RACE_G, levels=c(1,2,3), labels=c("Caucasian", "African American", "Other"))
+cathr$INTVCATH <- factor(cathr$INTVCATH, levels=c(0,1), labels=c("No", "Yes"))
+```
+
+
+```{r}
+# treatment
+cathr_clean %>% 
+  count(INTVCATH)
+```
+```{r}
+# Percentage of column that is NA.
+(colMeans(is.na(cathr_clean)))*100
+```
+
+```{r}
+summary(cathr_clean$DPMI)
+```
+
+Days to Closest Previous Coronary Artery Bypass Surgery (DPCABG)
+Days to Closest Previous Myocardial Infarction (DPMI)
+Days to Closest Previous Percutaneous Coronary Intervention (DPPCI)
+
+```{r}
+ggplot(data = cathr_clean, aes(x = DPMI)) + 
+  geom_histogram(binwidth = 2) + 
+  labs(x = "DPMI", 
+       y = "Count", 
+       title = "Distribution of Days to Closest Previous Myocardial Infarction")
+```
+```{r}
+data <- readRDS('dukecath_pre-processed.RDS')
+data_clean <- data %>% 
+  filter(ACS %in% c("NSTEMI", "UA")) %>% 
+  filter(TYPE_SUBSEQUENT != "Both (same day)")
+```
+
+
+Variables of Interest: DSINTV and DSINTV_CAT.
+Response: Death and DAYS2LKA.
+
+As the days between the diagnostic and interventional catheterization are highly skewed in the data, we decided to log-transform this variable in the model.
+```{r}
+hist(data_clean$DSINTV[data_clean$DSINTV > 0 & data_clean$DSINTV < 50])
+```
+
+```{r}
+library(survival)
+# install.packages("survminer")
+library(survminer)
+```
+
+```{r}
+colnames(data_clean)
+```
+### write out expression for the model.
+```{r}
+coxm1 <- coxph(Surv(DAYS2LKA, DEATH) ~
+               # log(DSINTV + 0.1) +
+                # DSINTV_CAT +
+               TYPE_SUBSEQUENT + 
+                 # demographic
+                 GENDER +
+                 RACE_G +
+                 # Patient history and co-morbidities
+                 HXMI +
+                 HXCEREB +
+                 HXDIAB + 
+                 HXSMOKE + 
+                 # Catheterization results
+                 NUMDZV +
+                 # interaction terms
+                 NUMDZV*TYPE_SUBSEQUENT +
+                 HXMI*TYPE_SUBSEQUENT +
+                 HXCEREB*TYPE_SUBSEQUENT +
+                 HXDIAB*TYPE_SUBSEQUENT, data = data_clean)
+
+summary(coxm1)
+```
+First, we were interested in the association between length of survival and the type of interventional procedure: CABG or PCI. We saw no significant association between type of procedure and hazard of death, holding all other variables constant. That is, the hazard of death is from [0.9591, 1.330] greater for patients who received PCI. This confidence interval crosses 1, so there is no significant association for type of interventional procedure.
+
+However, we then proceeded to look closer into the type of catherization by looking at interaction effects between comorbidities and type (PCI or CABG). In doing so, we found that there were significant association between the type of catheterization and history of Cerebrovascular Disease. That is, the association between the hazard of death and the type of procedure being PCI is 1.2949 [1.0197, 1.6445] greater for patients with a history of Cerebrovascular Disease than for patients without. Similarly, PCI is associated with higher hazard for patients with a history of diabetes. That is, for individuals with a history of diabetes, patients who received the PCI catheterization are expected to have 2.605 [] times the hazard compared to an individual who received the CABG treatment.
+
+This supported our hypothesis that PCI may be associated with worse outcome for patients who have more severe/complicated conditions.
+
+
+Among the variables we controlled for, we saw that a patient's past history of chronic illnesses, such as history of Myocardial Infarction, History of Diabetes, and History of Cerebrovascular Disease had significant associations with length of survival after catheterization. 
+
+Holding all other variables in the model constant, an individual who has had previous history of Myocardial Infarction is expected to have 1.2421 ([1.1493, 1.342]) times the hazard for an individual who has not had a previous history of this condition. This, and all other multiplicative effects discussed below, holds regardless of the time t.
+
+Holding all other variables in the model constant, an individual who has had a previous history of Diabetes is expected to have approximately 1.491 ([1.371, 1.621]) times the hazard of death compared to an individual who has not had a previous history of this condition.
+
+Holding all other variables in the model constant, an individual who has had a previous history of Cerebrovascular Disease is expected to have approximately 1.608 ([1.441, 1.795]) times the hazard of death compared to an individual who has not had a previous history of this condition.
+
+As expected, there is also a positive association between the number of diseased vessels and survival length. Holding all other variables in the model constant, there is a 1.3603 ([1.289, 1.436]) times increase in the expected relative hazard for each one additional increase in the number of significantly diseased vessels.
+
+There were also notable associations between hazard and patient gender. Holding all other variables in the model constant, females are expected to have 1.229 ([1.165, 1.297]) times the hazard of death compared to males.
+
+Interestingly, we do not find any statistically significant associations between hazard and interesting variables such as race and history of smoking.
+
+### Model Assumptions and Diagnostics
+
+An assumption of cox proportional hazards regression is that the hazard associated with a variable does not change over time. For example, the magnitude of the increase in risk of death associated with being a male is the same in early periods after an interventional cath as it is in later times.
+
+```{r}
+ggcoxdiagnostics(coxm1, type = "schoenfeld")
+# ggcoxdiagnostics(coxm1, type = "deviance", linear.predictions=F)
+```
+
+For each variable, we see that the plot of Schoenfeld residual is randomly distributed around 0 (the blue line remains approximately horizontal around over time). Hence, there is no strong reason to believe that the hazard associated with a variable changes over time.
+
+Another assumption that must be satisfied for the proportional hazards model is the independence of survival times between records in the dataset. Given that we filter for one record per patient in our final dataset (for patients with more than one catheterization, we choose to examine their most recent catheterization), there is no reason to believe that the survival time for one record in the dataset will be dependent on the survival time for another record.
+
+
+
+Our second research goal was in investigating whether the days between receiving diagnostic and interventional catheterization is associated with longer survival. We analyzed this exclusively for patients who received the CABG treatment, since most patients who received the PCI catheteration received treatment on the same day. According to the model below, for every one day increase in the time between the diagnostic and interventional catheterization, the hazard is expected to multiply by a factor of approximately 0.9967 ([0.9771, 1.017]) times. As this confidence interval overlaps with 1, we do not see a significant association between hazard of death and time to interventional catheterization.
+
+```{r}
+data_clean_cabg <- data_clean %>% 
+  filter(TYPE_SUBSEQUENT == "CABG")
+```
+
+```{r}
+coxm2 <- coxph(Surv(DAYS2LKA, DEATH) ~
+               log(DSINTV + 0.1) +
+                # DSINTV_CAT +
+               # TYPE_SUBSEQUENT + 
+                 # demographic
+                 GENDER +
+                 RACE_G +
+                 # Patient history and co-morbidities
+                 HXMI +
+                 HXCEREB +
+                 HXDIAB + 
+                 HXSMOKE + 
+                 # Catheterization results
+                 NUMDZV
+                 # interaction terms
+                 #NUMDZV*TYPE_SUBSEQUENT +
+                 #HXMI*TYPE_SUBSEQUENT +
+                 #HXCEREB*TYPE_SUBSEQUENT +
+                 #HXDIAB*TYPE_SUBSEQUENT
+                 , data = data_clean_cabg)
+
+summary(coxm2)
+```
+
+Notes:
+
+```{r}
+ggsurvplot(survfit(Surv(DAYS2LKA, DEATH) ~ TYPE_SUBSEQUENT, data = data_clean), 
+     xlab = "Days", ylab = "Est. Survival Probability",
+     ylim = c(0, 1),
+     conf.int = T, censor = F
+     )
+```
+
+```{r}
+type_subseq_m <- coxph(Surv(DAYS2LKA, DEATH) ~ TYPE_SUBSEQUENT
+                 , data = data_clean)
+
+summary(type_subseq_m)
+```
+
+However, we do note that, when placed in a model without controlling for other variables, PCI is associated with longer survival. That is, an individual who received the PCI treatment is expected to have approximately 0.8612 ([0.8193, 0.9053]) times the hazard of death compared to an individual who received CABG. This is also reflected in the Kaplan-Meier curve of PCI against CABG. This may be because CABG is typically performed on severely sick patients with multiple vessels blocked whereas PCI is performed on less sick people with maybe only one or two blocked arteries, so if we’ve controlled for all these things like number of blocked vessels and comorbidities etc., then it is not surprising that CABG may better because it’s a more definitive surgery (creates a new path for blood flow rather than reopening an old path) [cite?].
+

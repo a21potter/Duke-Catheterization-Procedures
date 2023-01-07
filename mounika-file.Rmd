@@ -1,0 +1,170 @@
+---
+title: "Mounika-file"
+output: html_document
+date: "2022-11-04"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+library(forcats)
+library(readr)
+```
+
+
+
+```{r}
+cathr <- readRDS("~/R/case-2-team-2/dukecath_pre-processed.RDS")
+
+# Overview of patient information
+cathr$ACS <- factor(cathr$ACS, levels=c(0,1,2,3,4), labels=c("No ACS", "STEMI", "NSTEMI", "MI Unspecified", "UA"))
+cathr$GENDER <- factor(cathr$GENDER, levels=c(0,1), labels=c("M", "F"))
+cathr$RACE_G <- factor(cathr$RACE_G, levels=c(1,2,3), labels=c("Caucasian", "African American", "Other"))
+cathr$INTVCATH <- factor(cathr$INTVCATH, levels=c(0,1), labels=c("No", "Yes"))
+
+
+cathr_clean <- cathr %>% 
+  filter(ACS %in% c("NSTEMI", "UA")) %>%  
+  filter(DIAGCATH == 0)
+```
+
+
+
+
+The focus for the dataset provided is on coronary artery disease and left heart catheterization results. Broadly, your objective is to determine whether there might be associations with patient/catheterization characteristics and outcomes. However, the specific outcomes and predictors you choose are up to you - you must come up with a clinically-relevant model and make appropriate scientific conclusions in context.
+
+```{r}
+data <- readRDS('~/R/case-2-team-2/dukecath_pre-processed.RDS')
+data_clean <- data %>% 
+  filter(ACS %in% c("NSTEMI", "UA")) %>% 
+  filter(TYPE_SUBSEQUENT != "Both (same day)")
+```
+
+```{r}
+data_clean %>% 
+  select(GENDER, RACE_G, DAYS2LKA) %>% 
+  ggplot(aes(x = DAYS2LKA)) +
+  geom_density() + 
+  labs(x = "Days", y = "Count", fill = "Gender",
+       title = "How Days Differ Between Genders of Patients") +
+  facet_wrap(.~GENDER) +
+  theme_bw()
+```
+
+
+```{r}
+data_clean %>% 
+  select(GENDER, RACE_G, DAYS2LKA) %>% 
+  ggplot(aes(x = DAYS2LKA)) +
+  geom_density() + 
+  labs(x = "Days", y = "Count",  title = "How Days Differ Between Ethnicity of Patients") +
+  facet_wrap(.~RACE_G) +
+  theme_bw()
+```
+ggplot(data, aes(x=value)) + geom_density(aes(group=factor))
+
+
+```{r}
+data_clean %>% 
+  select(GENDER, RACE_G, DAYS2LKA) %>% 
+  ggplot(aes(x = DAYS2LKA)) + 
+  geom_density(aes(group=GENDER, color = GENDER))
+```
+
+
+
+
+```{r}
+data_clean %>% 
+  select(GENDER, RACE_G, DAYS2LKA) %>% 
+  ggplot(aes(x = DAYS2LKA)) + 
+  geom_density(aes(group=RACE_G, color = RACE_G))
+```
+
+
+
+
+Some questions I have in mind for research:
+1. relationship between demographics and death? 
+2. relationship between others and death? 
+3. relationship between demographics and number of days until death?
+4. relationship between others and number of days until death?
+
+Resources for research/building domain knowledge:
+Right heart catheterization
+https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2857603/ 
+
+Patient characteristics and survival outcomes of cardiac arrest in the cardiac catheterization laboratory
+https://pubmed.ncbi.nlm.nih.gov/35944818/
+(Might help with variable selection?)
+
+Characteristics of Patients Undergoing Cardiac Catheterization Before Noncardiac Surgery
+https://jamanetwork.com/journals/jamainternalmedicine/fullarticle/2504187
+
+
+
+
+Mini translation of variable names:
+- rdaysfromindex = days from the date of the first catheterization for that
+patient that shows significant coronary artery disease (CAD) that is recorded in the Duke Health System
+- RSEQCATHNUM = this variable records the sequential number for the current catheterization
+record
+- rsubjecID = identifier, take out
+- YRCATH_G = year the procedure took place?
+- demographic variables = need levels to be relabeled
+- ACS = Acute coronary syndrome, coronary artery disease symptom status at the time of presentation
+- CHFSEV = Congestive heart failure is defined as evidence of fluid retention due to cardiac causes. There should be a history of one or more of the following: exertional dyspnea, orthopnea, paroxysmal nocturnal dyspnea, rales, pulmonary congestion on x-ray, or a ventricular gallop. This variable measures SEVERITY of CHF
+- DPCABG = Days from this catheterization to the closest preceding CABG.
+- DPMI = Days from this catheterization to the closest preceding myocardial infarction. 
+- DPPCI = Days from this catheterization to the closest preceding Percutaneous Coronary Intervention.
+- HXANGINA = History of anginal pain ever (excluding myocardial infarction pain)
+- HXCEREB = History of a stroke, a transient ischemic attack, hemiplegia, carotid surgery or stenting. An asymptomatic bruit is not included in the definition
+- HXCHF = History of congestive heart failure not due to acute MI
+- HXCOPD= History of chronic obstructive pulmonary disease (COPD)
+- HXDIAB = history of diabetes not differentiating between type I and type II
+- HXHTN = hypertension history
+- HXHYL = Previous diagnosis and/or treatment of hypercholesterolemia by a physician.
+- HXMI = History of a prior myocardial infarction
+- HXSMOKE = history of smoking
+- NUMPRMI = number of MRIs in history
+- DIASBP_R = diastolic blood pressure
+- PULSE_R = heart rate
+- SYSBP_R = systolic blood pressure
+- CBRUITS = presence of carotid bruits 
+- HEIGHT_R = height
+- S3 = third heart sound detected?
+- WEIGHT_R = weight 
+- CREATININE_R = Serum Creatinine (mg/dL) (as reported)
+- HDL_R = High Density Lipid (mg/dL) (as reported)
+- LDL_R = Low Density Lipid (mg/dL) (as reported)
+- TOTCHOL_R = Total Cholesterol (mg/dL) (as reported)
+
+
+Justifications: 
+- response: days to last known alive 
+- variables of interest: race, gender
+- control for: ACS
+
+-----------write up:
+
+Limitations and future directions
+The limitations of our research mainly lie in the scope of our research question and our model. To start, we aimed to preserve the interpretability of our final Cox regression model by selecting variables that would allow us to do so. Thus, there are other possible covariates we could have controlled for such as age that we chose not to prioritize in our analysis.
+
+In our time-to-CABG analysis, the DSINTV variable may not fully capture our variable of interest, which was the time between a diagnostic treatment and its subsequent CABG treatment because the DSINTV variable does not guarantee that a subsequent CABG corresponds to treating the conditions found during the previous diagnostic catheterization. 
+
+In this manuscript, we focus on overall survival of a patient. However, survival may not be the only outcome that is indicative of whether PCI or CABG is a better procedure. In the future, we may expand our analysis to include other possible secondary outcomes such as time to recurrent MI or stroke 
+
+
+
+
+
+
+
+
+
+
